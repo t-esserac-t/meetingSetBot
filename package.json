@@ -1,0 +1,24 @@
+{
+	"name": "firstworker",
+	"version": "0.0.0",
+	"private": true,
+	"scripts": {
+		"deploy": "wrangler deploy",
+		"dev": "wrangler dev",
+		"start": "wrangler dev",
+		"test": "vitest",
+		"cf-typegen": "wrangler types",
+		"register:commands": "node ./scripts/register-commands.mjs"
+	},
+	"devDependencies": {
+		"@cloudflare/vitest-pool-workers": "^0.8.19",
+		"typescript": "^5.5.2",
+		"vitest": "~3.2.0",
+		"wrangler": "^4.33.1"
+	},
+	"dependencies": {
+		"@types/node": "^24.3.0",
+		"discord-interactions": "^4.3.0",
+		"express": "^5.1.0"
+	}
+}
