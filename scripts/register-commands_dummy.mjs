@@ -3,6 +3,10 @@
 //   APPLICATION_ID=xxxxx BOT_TOKEN=xxxxx node scripts/register-commands.mjs
 // Optionally restrict to a guild:
 //   APPLICATION_ID=xxxxx BOT_TOKEN=xxxxx GUILD_ID=yyyyy node scripts/register-commands.mjs
+import dotenv from 'dotenv';
+import { setTimeout as sleep } from 'timers/promises';
+dotenv.config({ override: true });
+console.log('DUMMY_ID:',process.env.DUMMY_ID);
 
 const APP_ID = process.env.APPLICATION_ID;
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -54,6 +58,7 @@ console.log('Config:', JSON.stringify({
   registerTarget: REGISTER_TARGET || '(auto)',
   skipRegister: SKIP_REGISTER
 }));
+console.log('Config:','app id: ', APP_ID, 'env global: ', PURGE_GLOBAL);
 
 async function apiFetch(method, url, body) {
   const res = await fetch(url, {
@@ -68,76 +73,32 @@ async function apiFetch(method, url, body) {
   return res;
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-async function putWithRetry(url, body, tries = 6) {
+async function reqWithRetry(method, url, body, tries = 3) {
   for (let i = 0; i < tries; i++) {
-    const res = await apiFetch('PUT', url, body);
-    if (res.ok) return res;
-
+    const res = await apiFetch(method, url, body);
+    if (res.ok || i === tries - 1) return res;
     const text = await res.text().catch(() => '');
-
-    // Handle explicit rate limit (429): respect retry_after / headers
+    const retryAfterMsDef = 1000;
     if (res.status === 429) {
-      let retryAfterMs = 1500; // default backoff
-      try {
-        const data = JSON.parse(text);
-        if (typeof data.retry_after === 'number') retryAfterMs = Math.ceil(data.retry_after * 1000);
-      } catch { /* ignore parse error */ }
-      const ra = res.headers.get('retry-after');
-      if (ra && !Number.isNaN(Number(ra))) retryAfterMs = Math.max(retryAfterMs, Number(ra) * 1000);
-      const resetAfter = res.headers.get('x-ratelimit-reset-after');
-      if (resetAfter && !Number.isNaN(Number(resetAfter))) retryAfterMs = Math.max(retryAfterMs, Number(resetAfter) * 1000);
-      await sleep(retryAfterMs + 200);
-      continue;
-    }
-
-    // Retry on transient Discord errors (e.g., 5xx or 40333 internal network error)
-    if (res.status >= 500 || text.includes('40333')) {
-      await sleep(1000 * (i + 1));
-      continue;
-    }
-
-    // Non-retryable; attach debug text for caller
-    const out = new Response(text, { status: res.status });
-    out.debugText = text;
-    return out;
-  }
-  // Final attempt result
-  const res = await apiFetch('PUT', url, body);
-  res.debugText = await res.text().catch(() => '');
-  return res;
-}
-
-async function getWithRetry(url, tries = 6) {
-  for (let i = 0; i < tries; i++) {
-    const res = await apiFetch('GET', url);
-    if (res.ok) return res;
-    const text = await res.text().catch(() => '');
-    if (res.status === 429) {
-      let retryAfterMs = 1500;
+      
+      let retryAfterMs = retryAfterMsDef;
       try {
         const data = JSON.parse(text);
         if (typeof data.retry_after === 'number') retryAfterMs = Math.ceil(data.retry_after * 1000);
       } catch {}
-      const ra = res.headers.get('retry-after');
-      if (ra && !Number.isNaN(Number(ra))) retryAfterMs = Math.max(retryAfterMs, Number(ra) * 1000);
-      const resetAfter = res.headers.get('x-ratelimit-reset-after');
-      if (resetAfter && !Number.isNaN(Number(resetAfter))) retryAfterMs = Math.max(retryAfterMs, Number(resetAfter) * 1000);
-      await sleep(retryAfterMs + 200);
+
+      await sleep(retryAfterMs + 100); //一応100ms伸ばしておく
       continue;
     }
+    // 何秒待てばいいかわからないエラーの場合は固定値秒待機して再送
     if (res.status >= 500 || text.includes('40333')) {
-      await sleep(1000 * (i + 1));
+      await sleep(retryAfterMsDef);
       continue;
     }
     const out = new Response(text, { status: res.status });
     out.debugText = text;
     return out;
   }
-  const res = await apiFetch('GET', url);
-  res.debugText = await res.text().catch(() => '');
-  return res;
 }
 
 const commands = [
@@ -224,7 +185,7 @@ async function main() {
   // Optional purge to avoid duplicated commands appearing (global vs guild)
   if (PURGE_GLOBAL) {
     console.log('Purging global commands via PUT [] ...');
-    const pr = await putWithRetry(globalRoute, []);
+    const pr = await reqWithRetry('PUT', globalRoute, []);
     if (!pr.ok) {
       const t = (await pr.text().catch(() => '')) || pr.debugText || '';
       console.error('Failed to purge global commands', pr.status, t);
@@ -235,7 +196,7 @@ async function main() {
   }
   if (PURGE_GUILD && guildRoute) {
     console.log('Purging guild commands via PUT [] ...');
-    const pr = await putWithRetry(guildRoute, []);
+    const pr = await reqWithRetry('PUT', guildRoute, []);
     if (!pr.ok) {
       const t = (await pr.text().catch(() => '')) || pr.debugText || '';
       console.error('Failed to purge guild commands', pr.status, t);
@@ -252,7 +213,7 @@ async function main() {
     console.log('Skip registering commands (SKIP_REGISTER=true)');
   } else {
     console.log('Registering to', route === globalRoute ? 'global' : 'guild', 'route...');
-    const res = await putWithRetry(route, commands);
+    const res = await reqWithRetry('PUT', route, commands);
     if (!res.ok) {
       const text = (await res.text().catch(() => '')) || res.debugText || '';
       console.error('Failed to register commands', res.status, text);
@@ -264,9 +225,10 @@ async function main() {
 
   // Fetch and print current global/guild command lists to compare with Discord UI
   try {
-    const g = await getWithRetry(globalRoute);
+    const g = await reqWithRetry('GET', globalRoute);
     if (g.ok) {
       const arr = await g.json();
+      console.table(arr.map((c) => c.name));
       console.log('Global commands:', arr.map((c) => c.name).join(', '));
     } else {
       const t = (await g.text().catch(() => '')) || g.debugText || '';
@@ -278,7 +240,7 @@ async function main() {
 
   if (guildRoute) {
     try {
-      const gg = await getWithRetry(guildRoute);
+      const gg = await reqWithRetry('GET', guildRoute);
       if (gg.ok) {
         const arr = await gg.json();
         console.log('Guild commands:', arr.map((c) => c.name).join(', '));
