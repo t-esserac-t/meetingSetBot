@@ -33,4 +33,4 @@
   - `DISCORD_BOT_TOKEN` を使用し、allowed_mentions を適切に設定して送信します。
 
 ### Bot招待リンク
-https://discord.com/oauth2/authorize?client_id=1410966251232165889&permissions=2147617792&integration_type=0&scope=bot+applications.commands
+https://discord.com/oauth2/authorize?client_id=1410966251232165889
